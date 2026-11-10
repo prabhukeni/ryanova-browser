@@ -1,0 +1,47 @@
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;font-family:Inter,system-ui,-apple-system,sans-serif;background:#081321;color:#eaf4ff}button{background:transparent;border:0;color:#b4c8e2;cursor:pointer;border-radius:9px;font-size:20px;min-width:32px;height:32px}button:hover{background:#233a54;color:white}header{height:108px;background:linear-gradient(115deg,#0b1729,#111d35 55%,#16263e);border-bottom:1px solid #24415b;position:relative;z-index:3}.top{height:51px;display:flex;align-items:center;gap:9px;padding:6px 13px}.brand{font-size:13px;font-weight:800;letter-spacing:2px;min-width:112px;color:#e8f7ff}.orb{font-size:25px;color:#43e3e8;vertical-align:middle;margin-right:4px;text-shadow:0 0 15px #38e1e88a}#tabs{display:flex;align-items:end;gap:5px;flex:1;overflow:auto;scrollbar-width:none;height:39px}.tab{display:flex;align-items:center;gap:7px;background:#1a2a43;border:1px solid #2d435e;border-bottom:0;border-radius:12px 12px 3px 3px;padding:5px 10px;min-width:110px;max-width:220px;font-size:12px;color:#a9bdd4;cursor:pointer;height:34px}.tab.active{background:#29415c;color:#fff;border-top:2px solid #4ae3e4}.tab .name{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;flex:1}.tab .close{font-size:15px;padding:0 3px;color:#8ea6bf}.nav{display:flex;align-items:center;gap:6px;padding:7px 14px}.address{display:flex;align-items:center;gap:8px;flex:1;background:#0b1b2e;border:1px solid #37536c;border-radius:13px;padding:0 13px;height:37px;color:#68d8e2}.address:focus-within{border-color:#4be4df;box-shadow:0 0 0 2px #36dcd41b}input{background:transparent;border:0;outline:0;color:#effbff;font:inherit;min-width:0}#url{width:100%;font-size:13px}#shield{color:#52dfcf}#start{position:absolute;inset:108px 0 0;background:radial-gradient(ellipse at 50% 38%,#163651 0,#0b1b31 46%,#081321 100%);display:grid;place-items:center;overflow:hidden}.halo{position:absolute;width:440px;height:440px;border:1px solid #55e7ff22;border-radius:50%;box-shadow:0 0 0 55px #4b99ff08,0 0 0 120px #8558d808}.start-inner{z-index:1;text-align:center;width:min(580px,88vw);margin-top:-35px}.mark{font-size:60px;color:#49e4e2;text-shadow:0 0 35px #3ddbdc80}h1{font-size:58px;letter-spacing:-3px;margin:5px 0 0;font-weight:750}h1 span{color:#45e3e2}p{color:#9bb3cc;font-size:15px;margin:5px 0 34px}.search{background:#142a41;border:1px solid #4b6d87;border-radius:18px;height:54px;display:flex;align-items:center;gap:12px;padding:0 18px;color:#56e3e0;box-shadow:0 16px 60px #0004}.search input{width:100%;font-size:15px}.hint{margin-top:28px;color:#8baac0;font-size:12px}.hint span{padding:0 9px;color:#4d6680}small{display:block;margin-top:45px;color:#5e7b91}#panel{position:absolute;right:16px;top:104px;width:min(390px,90vw);max-height:75vh;overflow:auto;z-index:8;background:#14253a;border:1px solid #385a72;border-radius:16px;box-shadow:0 18px 70px #0009;padding:18px;font-size:13px}#panel.hidden,#start.hidden{display:none}.panel-title{font-size:17px;font-weight:700;margin-bottom:15px}.item{padding:10px;border-bottom:1px solid #2b4257;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.item:hover{background:#24415a}.panel-button{display:block;width:100%;text-align:left;font-size:13px;height:auto;padding:10px}.muted{color:#9bb0c4;font-size:12px;overflow-wrap:anywhere}.switch{display:flex;align-items:center;justify-content:space-between;padding:9px 0}.switch input{accent-color:#3bd7d3}
+/* Menus are rendered in the dedicated native overlay view. */
+#panel{display:none !important}
+
+/* Search and AI homepage controls */
+.search-providers {
+  display:flex;
+  justify-content:center;
+  gap:12px;
+  margin:14px auto 18px;
+  flex-wrap:wrap;
+}
+.search-providers button {
+  background:#142b43;
+  color:#9acaf0;
+  border:1px solid #315775;
+  border-radius:8px;
+  padding:9px 16px;
+  cursor:pointer;
+  font-size:12px;
+}
+.search-providers button:hover {
+  background:#1c3b59;
+  color:#ffffff;
+}
+
+/* Editable search and AI provider selectors */
+.nav-providers {
+  display:flex;
+  align-items:center;
+  gap:5px;
+  flex-shrink:0;
+}
+.nav-providers select {
+  max-width:112px;
+  min-width:0;
+  background:#172a40;
+  color:#9acaf0;
+  border:1px solid #385a72;
+  border-radius:7px;
+  padding:7px 5px;
+  font-size:11px;
+  cursor:pointer;
+}
+.nav-providers select:focus {
+  outline:1px solid #42dce5;
+}

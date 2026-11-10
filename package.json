@@ -1,0 +1,65 @@
+{
+  "name": "ryanova-browser",
+  "productName": "Ryanova Browser",
+  "version": "1.1.0-beta.2",
+  "description": "Ryanova Browser - Explore clearly. Browse freely.",
+  "main": "main.js",
+  "author": {
+    "name": "Ryanova Development Team",
+    "email": "prabhukeni@gmail.com"
+  },
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dist:linux": "electron-builder --linux deb AppImage --x64"
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.ryanova.browser",
+    "productName": "Ryanova Browser",
+    "files": [
+      "main.js",
+      "preload.js",
+      "ui/**/*",
+      "package.json"
+    ],
+    "linux": {
+      "category": "Network",
+      "target": [
+        "deb",
+        "AppImage"
+      ],
+      "executableName": "ryanova-browser",
+      "synopsis": "Ryanova Browser",
+      "icon": "build/icons",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "syncDesktopName": true
+    },
+    "deb": {
+      "depends": [
+        "libnss3",
+        "libatk-bridge2.0-0",
+        "libgtk-3-0",
+        "libasound2t64 | libasound2",
+        "libgbm1",
+        "libx11-6"
+      ]
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "prabhukeni",
+        "repo": "ryanova-browser"
+      }
+    ]
+  },
+  "homepage": "https://ryanova.com/",
+  "desktopName": "ryanova-browser",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/prabhukeni/ryanova-browser.git"
+  }
+}
