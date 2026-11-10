@@ -159,7 +159,7 @@ async function checkRyanovaUpdates(manual = false) {
 
 const {app,BrowserWindow,WebContentsView,session,ipcMain,dialog,shell}=require('electron');
 const fs=require('fs'),path=require('path');
-const VERSION='1.1.0-beta.1';
+const VERSION='1.1.0-beta.2';
 app.commandLine.appendSwitch('disable-background-networking');
 // Chromium sandbox stays ON. Never disable web security or certificate validation.
 let win,tabs=[],active=-1,seq=0,settings,history=[],bookmarks=[],downloads=[],blockStats=0;
