@@ -1,6 +1,6 @@
 # Ryanova Browser
 
-**Version: 1.1.0-beta.5**
+**Version: 1.1.0-beta.6**
 
 Ryanova is a Chromium-based Linux desktop browser built with Electron, featuring integrated privacy controls.
 
