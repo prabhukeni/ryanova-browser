@@ -124,7 +124,7 @@ async function checkRyanovaUpdates(manual=false){
     const script=pathR.join(__dirname,'updater','replace-appimage.sh');
     if(!fsR.existsSync(script))throw Error('AppImage update helper missing');
     fsR.chmodSync(destination,0o700);
-    const child=spawnRyanova('/bin/bash',[script,String(process.pid),running,destination],{detached:true,stdio:'ignore'});
+    const helperDir=pathR.join(app.getPath("userData"),"updater-helper"); fsR.mkdirSync(helperDir,{recursive:true,mode:0o700}); const persistentScript=pathR.join(helperDir,"replace-appimage.sh"); const updateLog=pathR.join(helperDir,"installation.log"); fsR.copyFileSync(script,persistentScript); fsR.chmodSync(persistentScript,0o700); const child=spawnRyanova("/bin/bash",[persistentScript,String(process.pid),running,destination,updateLog],{detached:true,stdio:"ignore"});
     child.unref();app.quit();
   }catch(e){
     ryanovaUpdateStatus='Update error: '+e.message;
