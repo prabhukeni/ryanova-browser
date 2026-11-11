@@ -26,3 +26,9 @@ fullscreen-test.js
 *.WORKING-*
 node_modules/
 dist/
+
+node_modules/
+dist/
+*.backup
+*.BEFORE-*
+*.WORKING-*

@@ -8,7 +8,8 @@ function render(){
   let h='<div class="panel-heading"><div class="panel-title">'+
   esc(panel[0].toUpperCase()+panel.slice(1))+
   '</div><button id="close-panel" title="Close panel" aria-label="Close panel">×</button></div>';
-  if(panel==='menu')h+=`<button class="panel-button" data-action="bookmarks">☆ Bookmarks</button><button class="panel-button" data-action="history">◷ History</button><button class="panel-button" data-action="downloads">↓ Downloads folder</button><button class="panel-button" data-action="settings">⚙ Settings & privacy</button><button class="panel-button" data-action="about">ⓘ About Ryanova</button>`;
+  if(panel==='menu')h+=`<button class="panel-button" data-action="new-private-tab">◈ New Private Tab</button><button class="panel-button" data-action="privacy">⬡ Privacy Shield</button><button class="panel-button" data-action="bookmarks">☆ Bookmarks</button><button class="panel-button" data-action="history">◷ History</button><button class="panel-button" data-action="downloads">↓ Downloads folder</button><button class="panel-button" data-action="settings">⚙ Settings & privacy</button><button class="panel-button" data-action="about">ⓘ About Ryanova</button>`;
+  if(panel==='privacy'){const tab=state.tabs?.find(x=>x.active);const st=tab?.stats||{};h+=`<p class="muted">${tab?.private?'Private tab · temporary storage':'Regular tab'}</p><label class="search-setting-label">Protection for this tab</label><select class="search-setting-select" id="privacy-level"><option value="strict" ${tab?.level==='strict'?'selected':''}>Strict (default)</option><option value="balanced" ${tab?.level==='balanced'?'selected':''}>Balanced</option><option value="standard" ${tab?.level==='standard'?'selected':''}>Standard</option></select><div class="provider-heading">Blocked on this tab</div><div class="privacy-counts">Advertising trackers: ${st.advertising||0}<br>Analytics trackers: ${st.analytics||0}<br>Social trackers: ${st.social||0}<br>Tracking parameters removed: ${st.links||0}<br>Third-party cookies restricted: ${st.cookies||0}</div><p class="muted">Measured events only. Changing level reloads the tab. Strict can break some sites. Private tabs do not hide your IP address.</p><button class="panel-button" data-action="new-private-tab">+ New Private Tab</button>`;}
   if(panel==='settings'){
   const select=(id,options,current)=>'<label class="search-setting-label">'+
     (id==='search-engine'?'Default search engine':'Preferred AI assistant')+
@@ -54,7 +55,7 @@ function render(){
   h+='<button class="provider-add" data-type="ai">+ Add AI assistant</button>';
   h+='<button class="panel-button" data-action="open-ai">✦ Open AI assistant</button>';
 }
-if(panel==='settings')h+=`<label class="switch">Auto Updates (check and download) <input id="auto-updates" type="checkbox" ${state.autoUpdates!==false?'checked':''}></label><label class="switch">Block common ads & trackers <input id="block" type="checkbox" ${state.blocking?'checked':''}></label><div class="muted">Block count this session: ${state.blocked||0}. Basic blocklist, not comprehensive filtering.</div><button class="panel-button" data-action="clear">Clear cookies, cache and history</button><div class="muted">Home page: ${esc(state.home)}</div><button class="panel-button" data-action="sethome">Set current page as home</button>`;
+if(panel==='settings')h+=`<label class="switch">Auto Updates (check and download) <input id="auto-updates" type="checkbox" ${state.autoUpdates!==false?'checked':''}></label><div class="muted">Privacy Shield: Strict by default; use the shield icon to change the current tab.</div><div class="muted">Block count this session: ${state.blocked||0}. Basic blocklist, not comprehensive filtering.</div><button class="panel-button" data-action="clear">Clear cookies, cache and history</button><div class="muted">Home page: ${esc(state.home)}</div><button class="panel-button" data-action="sethome">Set current page as home</button>`;
   if(panel==='about')h+=`<p><strong>Ryanova Browser ${esc(state.version)}</strong></p><p class="muted">Chromium ${esc(state.engine)} · ${esc(state.platform)}</p><p class="muted">Internal team beta. Chromium sandbox enabled. No telemetry in Ryanova code.</p>`;
   if(panel==='bookmarks'||panel==='history'){
     const items=state[panel]||[];
@@ -175,7 +176,7 @@ if(ryanovaUpdateButton){
   if(aiButton)aiButton.onclick=()=>api.send('open-ai');
   el.querySelectorAll('[data-action]').forEach(x=>x.onclick=()=>{
     const a=x.dataset.action;
-    if(a==='open-ai')api.send('open-ai');else if(['bookmarks','history','settings','about'].includes(a))setPanel(a);
+    if(a==='open-ai')api.send('open-ai');else if(a==='new-private-tab'){api.send('new-private-tab');setPanel('')}else if(['bookmarks','history','settings','about','privacy'].includes(a))setPanel(a);
     else if(a==='downloads')api.send('open-downloads');
     else if(a==='clear'&&confirm('Clear cookies, cache and history?'))api.send('clear-data');
     else if(a==='sethome'){
@@ -187,7 +188,7 @@ if(ryanovaUpdateButton){
     api.send('navigate',x.dataset.url);setPanel('');
   });
   const au=document.getElementById('auto-updates');if(au)au.onchange=()=>api.send('set-auto-updates',au.checked);
-  const b=document.getElementById('block');if(b)b.onchange=()=>api.send('set-blocking',b.checked);
+  const b=document.getElementById('block');if(b)b.disabled=true;const pl=document.getElementById('privacy-level');if(pl)pl.onchange=()=>api.send('set-tab-privacy',{level:pl.value});
 }
 api.onPanel(name=>{panel=name;render()});
 api.onState(s=>{state=s;render()});

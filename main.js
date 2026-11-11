@@ -136,10 +136,44 @@ async function checkRyanovaUpdates(manual=false){
 
 const {app,BrowserWindow,WebContentsView,session,ipcMain,dialog,shell}=require('electron');
 const fs=require('fs'),path=require('path');
+const privacy=require('./privacy');
 const VERSION=app.getVersion();
 app.commandLine.appendSwitch('disable-background-networking');
 // Chromium sandbox stays ON. Never disable web security or certificate validation.
 let win,tabs=[],active=-1,seq=0,settings,history=[],bookmarks=[],downloads=[],blockStats=0;
+const privacyCounters=()=>({advertising:0,analytics:0,social:0,links:0,cookies:0});
+const privatePartitions=new Set();
+let privacySendTimer=null;
+function queuePrivacyState(){if(privacySendTimer)return;privacySendTimer=setTimeout(()=>{privacySendTimer=null;send()},300)}
+function tabForContents(id){return tabs.find(t=>t.view.webContents.id===id)}
+function tabLevel(t){return t?.level||'strict'}
+function privacyRequest(details){const t=tabForContents(details.webContentsId);if(!t)return false;const cat=privacy.block(details.url,tabLevel(t));if(cat){t.stats[cat]++;blockStats++;queuePrivacyState();return true}return false}
+function attachPrivacySession(ses){
+  ses.setPermissionRequestHandler((_wc,permission,callback)=>callback(permission==='fullscreen'));
+  ses.webRequest.onBeforeRequest((details,callback)=>callback({cancel:privacyRequest(details)}));
+  ses.webRequest.onBeforeSendHeaders((details,callback)=>{
+    const t=tabForContents(details.webContentsId);
+    if(t&&t.level==='strict'&&details.resourceType!=='mainFrame'&&privacy.thirdParty(details.url,t.url)){
+      const headers={...details.requestHeaders};
+      for(const key of Object.keys(headers))if(key.toLowerCase()==='cookie')delete headers[key];
+      return callback({requestHeaders:headers});
+    }
+    callback({requestHeaders:details.requestHeaders});
+  });
+  ses.webRequest.onHeadersReceived((details,callback)=>{
+    const t=tabForContents(details.webContentsId);
+    if(t&&t.level==='strict'&&details.resourceType!=='mainFrame'&&privacy.thirdParty(details.url,t.url)){
+      const headers={...details.responseHeaders};let removed=0;
+      for(const key of Object.keys(headers))if(key.toLowerCase()==='set-cookie'){removed+=(Array.isArray(headers[key])?headers[key].length:1);delete headers[key]}
+      if(removed){t.stats.cookies+=removed;queuePrivacyState()}
+      return callback({responseHeaders:headers});
+    }
+    callback({responseHeaders:details.responseHeaders});
+  });
+  ses.on('will-download',(_e,item)=>{let d={name:item.getFilename(),url:item.getURL(),state:'downloading',at:Date.now()};downloads.push(d);item.on('done',(_event,status)=>{d.state=status;d.path=item.getSavePath();send()});send()});
+}
+function sanitizeForTab(t,url){const cleaned=privacy.clean(url);if(cleaned.removed&&t){t.stats.links+=cleaned.removed;queuePrivacyState()}return cleaned.url}
+
 const toolbarHeight=108;
 let htmlFullscreenTab = null;
 let overlayView = null;
@@ -158,10 +192,9 @@ const template=(settings.searchProviders||{})[selected]||engines[selected]||engi
 return template.includes('%s')
   ? template.replaceAll('%s',encodeURIComponent(s))
   : template+encodeURIComponent(s)}
-function isBlocked(url){if(!settings.blocking)return false;try{let u=new URL(url);let h=u.hostname.toLowerCase();return /(^|\.)(doubleclick\.net|googlesyndication\.com|googleadservices\.com|adnxs\.com|taboola\.com|outbrain\.com|scorecardresearch\.com|criteo\.com|quantserve\.com|adsrvr\.org|facebook\.net|hotjar\.com|segment\.io|mixpanel\.com)$/.test(h)}catch{return false}}
-function state(){return {version:VERSION,electron:process.versions.electron,engine:process.versions.chrome,platform:process.platform,autoUpdates:settings.autoUpdates!==false,updateStatus:ryanovaUpdateStatus,blocking:settings.blocking,home:settings.home,searchEngine:settings.searchEngine||'google',aiProvider:settings.aiProvider||'chatgpt',
+function state(){return {version:VERSION,electron:process.versions.electron,engine:process.versions.chrome,platform:process.platform,autoUpdates:settings.autoUpdates!==false,updateStatus:ryanovaUpdateStatus,blocking:true,home:settings.home,searchEngine:settings.searchEngine||'google',aiProvider:settings.aiProvider||'chatgpt',
 searchProviders:settings.searchProviders||{},
-aiProviders:settings.aiProviders||{},tabs:tabs.map((t,i)=>({id:t.id,title:t.title,url:t.url,loading:t.loading,active:i===active})),bookmarks,history:history.slice(-150).reverse(),downloads:downloads.slice(-30).reverse(),blocked:blockStats}}
+aiProviders:settings.aiProviders||{},tabs:tabs.map((t,i)=>({id:t.id,title:t.title,url:t.url,loading:t.loading,active:i===active,level:t.level,private:t.private,stats:{...t.stats}})),bookmarks,history:history.slice(-150).reverse(),downloads:downloads.slice(-30).reverse(),blocked:blockStats}}
 function send(){
   if(win&&!win.isDestroyed()) win.webContents.send('state',state());
   if(overlayView && !overlayView.webContents.isDestroyed()) overlayView.webContents.send('state',state());
@@ -201,7 +234,7 @@ function positionOverlay(){
   }
 }
 function setPanel(name){
-  panelName = ['menu','settings','about','bookmarks','history','downloads'].includes(name) ? name : '';
+  panelName = ['menu','settings','about','bookmarks','history','downloads','privacy'].includes(name) ? name : '';
   if(win && !win.isDestroyed()) win.webContents.send('panel-sync',panelName);
   if(overlayView && !overlayView.webContents.isDestroyed()) overlayView.webContents.send('panel-state',panelName);
   positionOverlay();
@@ -229,17 +262,23 @@ function scheduleResize(){
 }
 
 function activate(index){if(index<0||index>=tabs.length)return;active=index;tabs.forEach((t,i)=>{if(i===index){t.view.setVisible(t.url !== 'rynova://home');t.view.webContents.setBackgroundThrottling(false)}else{t.view.setVisible(false);t.view.webContents.setBackgroundThrottling(true)}});resize();send()}
-function newTab(raw){const url=validURL(raw||settings.home);let v=new WebContentsView({webPreferences:{partition:'persist:rynova',sandbox:true,contextIsolation:true,nodeIntegration:false,webSecurity:true,backgroundThrottling:true}});v.setBackgroundColor('#0b1220');
+function newTab(raw,options={}){const isPrivate=options.private===true;
+  const partition=isPrivate?'ryanova-private-'+(seq+1):'persist:rynova';
+  if(isPrivate){privatePartitions.add(partition);attachPrivacySession(session.fromPartition(partition))}
+  const initial=validURL(raw||settings.home);
+  const cleaned=privacy.clean(initial);
+  const url=cleaned.url;
+  let v=new WebContentsView({webPreferences:{partition,sandbox:true,contextIsolation:true,nodeIntegration:false,webSecurity:true,backgroundThrottling:true}});v.setBackgroundColor('#0b1220');
   // Use the actual Chromium version for website compatibility.
   const chromeVersion = process.versions.chrome;
   v.webContents.setUserAgent(
     `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ` +
     `(KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`
-  );let t={id:++seq,view:v,title:'New Tab',url:url,loading:false};tabs.push(t);win.contentView.addChildView(v);positionOverlay();v.webContents.setWindowOpenHandler(({url})=>{newTab(url);return {action:'deny'}});v.webContents.on('will-navigate',(e,u)=>{if(!/^https?:\/\//i.test(u)&&u!=='about:blank')e.preventDefault()});v.webContents.on('page-title-updated',(_e,title)=>{
+  );let t={id:++seq,view:v,title:'New Tab',url:url,loading:false,private:isPrivate,partition,level:'strict',stats:privacyCounters()};t.stats.links+=cleaned.removed;tabs.push(t);win.contentView.addChildView(v);positionOverlay();v.webContents.setWindowOpenHandler(({url})=>{newTab(url,{private:t.private});return {action:'deny'}});v.webContents.on('will-navigate',(e,u)=>{if(!/^https?:\/\//i.test(u)&&u!=='about:blank'){e.preventDefault();return}const cleaned=sanitizeForTab(t,u);if(cleaned!==u){e.preventDefault();v.webContents.loadURL(cleaned).catch(()=>{})}});v.webContents.on('page-title-updated',(_e,title)=>{
   t.title=title||'New Tab';
 
   if(title && title.trim() && title !== 'New Tab'){
-    const entry=[...history].reverse().find(h=>h.url===t.url);
+    const entry=t.private?null:[...history].reverse().find(h=>h.url===t.url);
     if(entry){
       entry.title=title;
       save('history',history);
@@ -247,7 +286,7 @@ function newTab(raw){const url=validURL(raw||settings.home);let v=new WebContent
   }
 
   send();
-});v.webContents.on('did-navigate',(_e,u)=>{t.url=u;if(t===current()){t.view.setVisible(true);resize()}history.push({title:t.title,url:u,at:Date.now()});if(history.length>1500)history=history.slice(-1500);save('history',history);send()});v.webContents.on('did-navigate-in-page',(_e,u)=>{t.url=u;if(t===current()){t.view.setVisible(true);resize()}send()});v.webContents.on('did-start-loading',()=>{t.loading=true;send()});v.webContents.on('did-stop-loading',()=>{t.loading=false;send()});
+});v.webContents.on('did-navigate',(_e,u)=>{t.url=u;if(t===current()){t.view.setVisible(true);resize()}if(!t.private){history.push({title:t.title,url:u,at:Date.now()});if(history.length>1500)history=history.slice(-1500);save('history',history);}send()});v.webContents.on('did-navigate-in-page',(_e,u)=>{t.url=u;if(t===current()){t.view.setVisible(true);resize()}send()});v.webContents.on('did-start-loading',()=>{t.loading=true;send()});v.webContents.on('did-stop-loading',()=>{t.loading=false;send()});
 // RYANOVA_HTML_FULLSCREEN
 v.webContents.on('enter-html-full-screen', () => {
   htmlFullscreenTab = t;
@@ -265,29 +304,27 @@ v.webContents.on('leave-html-full-screen', () => {
 });
 
 v.webContents.on('render-process-gone',()=>{t.title='Tab crashed — reload';send()});activate(tabs.length-1);if(url!=='rynova://home')v.webContents.loadURL(url).catch(()=>{});send()}
-function closeTab(index){if(index<0||index>=tabs.length)return;let t=tabs[index];tabs.splice(index,1);win.contentView.removeChildView(t.view);t.view.webContents.close();if(!tabs.length)newTab(settings.home);else activate(Math.min(index,tabs.length-1))}
+function closeTab(index){if(index<0||index>=tabs.length)return;let t=tabs[index];tabs.splice(index,1);win.contentView.removeChildView(t.view);t.view.webContents.close();if(t.private){privatePartitions.delete(t.partition);const privateSession=session.fromPartition(t.partition);privateSession.clearStorageData().catch(console.error);privateSession.clearCache().catch(console.error)}if(!tabs.length)newTab(settings.home);else activate(Math.min(index,tabs.length-1))}
 function current(){return tabs[active]}
 function init(){
 setTimeout(() => checkRyanovaUpdates(false), 15000);
 setInterval(() => checkRyanovaUpdates(false), 24 * 60 * 60 * 1000);
-settings=read('settings',{blocking:true,home:'rynova://home',searchEngine:'google',aiProvider:'chatgpt'});history=read('history',[]);bookmarks=read('bookmarks',[]);const ses=session.fromPartition('persist:rynova');ses.setPermissionRequestHandler((_wc,permission,callback)=>{
-  console.log('[RYANOVA PERMISSION REQUEST]', permission);
-  callback(permission === 'fullscreen');
-});ses.webRequest.onBeforeRequest((details,callback)=>{let block=isBlocked(details.url);if(block)blockStats++;callback({cancel:block})});ses.on('will-download',(_e,item)=>{let d={name:item.getFilename(),url:item.getURL(),state:'downloading',at:Date.now()};downloads.push(d);item.on('done',(_event,status)=>{d.state=status;d.path=item.getSavePath();send()});send()});win=new BrowserWindow({width:1180,height:800,minWidth:740,minHeight:500,title:'Ryanova Browser',backgroundColor:'#07111e',webPreferences:{preload:path.join(__dirname,'preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false}});win.setMenuBarVisibility(false);win.loadFile(path.join(__dirname,'ui','index.html'));initOverlay();win.on('resize',scheduleResize);
+settings=read('settings',{blocking:true,home:'rynova://home',searchEngine:'google',aiProvider:'chatgpt'});history=read('history',[]);bookmarks=read('bookmarks',[]);const ses=session.fromPartition('persist:rynova');attachPrivacySession(ses);win=new BrowserWindow({width:1180,height:800,minWidth:740,minHeight:500,title:'Ryanova Browser',backgroundColor:'#07111e',webPreferences:{preload:path.join(__dirname,'preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false}});win.setMenuBarVisibility(false);win.loadFile(path.join(__dirname,'ui','index.html'));initOverlay();win.on('resize',scheduleResize);
 win.on('maximize',scheduleResize);
 win.on('unmaximize',scheduleResize);
 win.on('enter-full-screen',scheduleResize);
 win.on('leave-full-screen',scheduleResize);win.webContents.on('did-finish-load',()=>{newTab(settings.home);send()});win.on('closed',()=>{tabs=[];win=null});}
 app.whenReady().then(init);app.on('window-all-closed',()=>{if(process.platform!=='darwin')app.quit()});
-function on(name,fn){ipcMain.on(name,(_e,arg)=>{try{fn(arg)}catch(e){console.error(name,e)}})}
+function on(name,fn){ipcMain.on(name,(e,arg)=>{if(!win||win.isDestroyed()||![win.webContents.id,overlayView?.webContents.id].includes(e.sender.id))return;try{fn(arg)}catch(e){console.error(name,e)}})}
 on('panel-set',name=>setPanel(name));
-on('new-tab',u=>newTab(u));on('select-tab',i=>activate(Number(i)));on('close-tab',i=>closeTab(Number(i)));
+on('new-tab',u=>newTab(u));on('new-private-tab',()=>newTab('rynova://home',{private:true}));
+on('set-tab-privacy',data=>{const t=current();if(!t||!data||!privacy.LEVELS.includes(data.level))return;t.level=data.level;send();t.view.webContents.reload()});on('select-tab',i=>activate(Number(i)));on('close-tab',i=>closeTab(Number(i)));
 on('check-updates',()=>checkRyanovaUpdates(true));
 on('set-auto-updates',enabled=>{settings.autoUpdates=!!enabled;save('settings',settings);send();});
-on('navigate',u=>{let t=current();if(!t)return;let url=validURL(u);if(url==='rynova://home'){t.view.webContents.loadURL('about:blank');t.url='rynova://home';t.title='New Tab';send()}else t.view.webContents.loadURL(url).catch(()=>{})});
+on('navigate',u=>{let t=current();if(!t)return;let url=sanitizeForTab(t,validURL(u));if(url==='rynova://home'){t.view.webContents.loadURL('about:blank');t.url='rynova://home';t.title='New Tab';send()}else t.view.webContents.loadURL(url).catch(()=>{})});
 on('back',()=>{let t=current();if(t&&t.view.webContents.navigationHistory.canGoBack())t.view.webContents.navigationHistory.goBack()});on('forward',()=>{let t=current();if(t&&t.view.webContents.navigationHistory.canGoForward())t.view.webContents.navigationHistory.goForward()});on('reload',()=>current()?.view.webContents.reload());
 on('bookmark',()=>{let t=current();if(!t||!t.url||t.url.startsWith('rynova:'))return;let i=bookmarks.findIndex(x=>x.url===t.url);if(i>=0)bookmarks.splice(i,1);else bookmarks.push({title:t.title,url:t.url});save('bookmarks',bookmarks);send()});
-on('open-bookmarks',()=>send());on('open-history',()=>send());on('set-blocking',b=>{settings.blocking=!!b;save('settings',settings);send()});
+on('open-bookmarks',()=>send());on('open-history',()=>send());// Legacy global blocker toggle intentionally superseded by per-tab Privacy Shield.
 on('save-provider',data=>{
   if(!data||typeof data!=='object')return;
   const type=data.type;
@@ -339,13 +376,13 @@ on('open-ai',()=>{
        urls[settings.aiProvider]||urls.chatgpt);
 });
 on('set-home',url=>{settings.home=validURL(url);save('settings',settings);send()});
-on('clear-data',async()=>{const ses=session.fromPartition('persist:rynova');await ses.clearStorageData();await ses.clearCache();history=[];save('history',history);send()});
+on('clear-data',async()=>{const ses=session.fromPartition('persist:rynova');await ses.clearStorageData();await ses.clearCache();for(const t of tabs)t.stats=privacyCounters();history=[];save('history',history);send()});
 on('open-downloads',()=>shell.openPath(app.getPath('downloads')));
 on('find',q=>{let t=current();if(!t)return;if(q)t.view.webContents.findInPage(String(q).slice(0,200));else t.view.webContents.stopFindInPage('clearSelection')});
 on('zoom',v=>{let t=current();if(t)t.view.webContents.setZoomFactor(Math.max(.5,Math.min(2,Number(v)||1)))});
 on('devtools',()=>{if(current())current().view.webContents.openDevTools({mode:'detach'})});
 
-ipcMain.on('open-page-devtools',()=>{
+ipcMain.on('open-page-devtools',(e)=>{if(!win||e.sender!==win.webContents)return;
   const t=current();
   if(t) t.view.webContents.openDevTools({mode:'detach'});
 });
