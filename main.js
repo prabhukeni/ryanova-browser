@@ -1,165 +1,142 @@
 
-// RYANOVA_UPDATE_MANAGER_V1
+// RYANOVA_UPDATE_MANAGER_V2
 const httpsRyanova = require('node:https');
-
-const RYANOVA_RELEASES =
-  'https://github.com/prabhukeni/ryanova-browser/releases';
-
-const RYANOVA_API =
-  'https://api.github.com/repos/prabhukeni/ryanova-browser/releases?per_page=30';
-
+const cryptoRyanova = require('node:crypto');
+const {spawn: spawnRyanova} = require('node:child_process');
+const RYANOVA_RELEASES = 'https://github.com/prabhukeni/ryanova-browser/releases';
+const RYANOVA_API = 'https://api.github.com/repos/prabhukeni/ryanova-browser/releases?per_page=30';
 let ryanovaUpdateBusy = false;
 let ryanovaLastNotice = '';
-
+let ryanovaUpdateStatus = 'Idle';
 function ryanovaVersionParts(value) {
-  const m = String(value).replace(/^v/, '')
-    .match(/^(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?$/i);
-  if (!m) return null;
-  return {
-    nums: [Number(m[1]), Number(m[2]), Number(m[3])],
-    pre: m[4] || '',
-    preNum: Number(m[5] || 0)
-  };
+  const m=String(value).replace(/^v/,'').match(/^(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?$/i);
+  return m?{nums:[+m[1],+m[2],+m[3]],pre:m[4]||'',preNum:+(m[5]||0)}:null;
 }
-
-function ryanovaCompareVersions(a, b) {
-  const x = ryanovaVersionParts(a);
-  const y = ryanovaVersionParts(b);
-  if (!x || !y) return 0;
-
-  for (let i = 0; i < 3; i++) {
-    if (x.nums[i] !== y.nums[i])
-      return x.nums[i] > y.nums[i] ? 1 : -1;
-  }
-
-  if (!x.pre && y.pre) return 1;
-  if (x.pre && !y.pre) return -1;
-  if (x.pre !== y.pre)
-    return x.pre > y.pre ? 1 : -1;
-  return Math.sign(x.preNum - y.preNum);
+function ryanovaCompareVersions(a,b) {
+  const x=ryanovaVersionParts(a),y=ryanovaVersionParts(b);
+  if(!x||!y) return 0;
+  for(let i=0;i<3;i++)if(x.nums[i]!==y.nums[i])return Math.sign(x.nums[i]-y.nums[i]);
+  if(!x.pre&&y.pre)return 1;
+  if(x.pre&&!y.pre)return -1;
+  if(x.pre!==y.pre)return x.pre>y.pre?1:-1;
+  return Math.sign(x.preNum-y.preNum);
 }
-
-function ryanovaFetchReleases() {
-  return new Promise((resolve, reject) => {
-    const req = httpsRyanova.get(RYANOVA_API, {
-      headers: {
-        'User-Agent': 'Ryanova-Browser-Updater',
-        'Accept': 'application/vnd.github+json'
-      },
-      timeout: 10000
-    }, res => {
-      if (res.statusCode !== 200) {
+function ryanovaRequest(url, maxBytes, redirects=0) {
+  return new Promise((resolve,reject)=>{
+    const u=new URL(url);
+    if(u.protocol!=='https:' || !['api.github.com','github.com','objects.githubusercontent.com','release-assets.githubusercontent.com'].includes(u.hostname))return reject(new Error('Untrusted download host'));
+    const req=httpsRyanova.get(u,{headers:{'User-Agent':'Ryanova-Browser-Updater','Accept':'application/vnd.github+json'},timeout:20000},res=>{
+      if([301,302,303,307,308].includes(res.statusCode)){
+        const next=new URL(res.headers.location||'',u);
         res.resume();
-        reject(new Error('GitHub HTTP ' + res.statusCode));
-        return;
+        if(redirects>=5)return reject(new Error('Too many redirects'));
+        return resolve(ryanovaRequest(next.href,maxBytes,redirects+1));
       }
-
-      let body = '';
-      res.on('data', chunk => {
-        body += chunk;
-        if (body.length > 1024 * 1024)
-          res.destroy(new Error('Response too large'));
-      });
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(body);
-          if (!Array.isArray(parsed))
-            throw new Error('Unexpected GitHub response');
-          resolve(parsed);
-        } catch (e) {
-          reject(e);
-        }
-      });
-      res.on('error', reject);
+      if(res.statusCode!==200){res.resume();return reject(new Error('HTTP '+res.statusCode));}
+      let size=0;const chunks=[];
+      res.on('data',c=>{size+=c.length;if(size>maxBytes){res.destroy(new Error('Download exceeds size limit'));return;}chunks.push(c);});
+      res.on('end',()=>resolve(Buffer.concat(chunks)));
+      res.on('error',reject);
     });
-
-    req.on('timeout', () =>
-      req.destroy(new Error('Update check timed out')));
-    req.on('error', reject);
+    req.on('timeout',()=>req.destroy(new Error('Request timed out')));
+    req.on('error',reject);
   });
 }
-
-async function checkRyanovaUpdates(manual = false) {
-  if (ryanovaUpdateBusy) return;
-  ryanovaUpdateBusy = true;
-
-  try {
-    const current = app.getVersion();
-    const releases = await ryanovaFetchReleases();
-
-    const candidates = releases.filter(r =>
-      !r.draft &&
-      r.tag_name &&
-      ryanovaVersionParts(r.tag_name) &&
-      typeof r.html_url === 'string' &&
-      r.html_url.startsWith(RYANOVA_RELEASES + '/tag/')
-    );
-
-    candidates.sort((a, b) =>
-      ryanovaCompareVersions(b.tag_name, a.tag_name));
-
-    const newest = candidates[0];
-
-    if (!newest ||
-        ryanovaCompareVersions(newest.tag_name, current) <= 0) {
-      if (manual) {
-        await dialog.showMessageBox({
-          type: 'info',
-          title: 'Ryanova Updates',
-          message: 'Ryanova Browser is up to date',
-          detail: 'Installed version: ' + current +
-            '\nElectron: ' + process.versions.electron +
-            '\nChromium: ' + process.versions.chrome,
-          buttons: ['OK']
-        });
-      }
-      return;
-    }
-
-    if (!manual && ryanovaLastNotice === newest.tag_name)
-      return;
-
-    ryanovaLastNotice = newest.tag_name;
-
-    const result = await dialog.showMessageBox({
-      type: 'info',
-      title: 'Ryanova Update Available',
-      message: 'Ryanova Browser ' + newest.tag_name +
-        ' is available',
-      detail: 'Installed: ' + current +
-        '\nAvailable: ' + newest.tag_name +
-        '\n\nReview the official GitHub release before installing.',
-      buttons: ['View GitHub Release', 'Later'],
-      defaultId: 1,
-      cancelId: 1,
-      noLink: true
-    });
-
-    if (result.response === 0)
-      await shell.openExternal(newest.html_url);
-
-  } catch (e) {
-    console.error('[Ryanova updater]', e.message);
-
-    if (manual) {
-      await dialog.showMessageBox({
-        type: 'warning',
-        title: 'Ryanova Updates',
-        message: 'Could not check for updates',
-        detail: e.message +
-          '\n\nRepository: ' + RYANOVA_RELEASES,
-        buttons: ['OK']
+async function ryanovaDownloadFile(url,target,maxBytes) {
+  const fsR=require('node:fs');
+  const u=new URL(url);
+  if(u.protocol!=='https:'||!['github.com','objects.githubusercontent.com','release-assets.githubusercontent.com'].includes(u.hostname))throw Error('Untrusted asset URL');
+  await new Promise((resolve,reject)=>{
+    const part=target+'.partial';let written=0;
+    const output=fsR.createWriteStream(part,{flags:'wx',mode:0o600});
+    let settled=false;
+    const fail=e=>{if(settled)return;settled=true;output.destroy();fsR.rm(part,{force:true},()=>reject(e));};
+    const get=(address,hops)=>{
+      const req=httpsRyanova.get(address,{headers:{'User-Agent':'Ryanova-Browser-Updater'},timeout:30000},res=>{
+        if([301,302,303,307,308].includes(res.statusCode)){
+          const next=new URL(res.headers.location||'',address);res.resume();
+          if(hops>=5||next.protocol!=='https:'||!['github.com','objects.githubusercontent.com','release-assets.githubusercontent.com'].includes(next.hostname))return fail(Error('Untrusted redirect'));
+          return get(next.href,hops+1);
+        }
+        if(res.statusCode!==200){res.resume();return fail(Error('Asset HTTP '+res.statusCode));}
+        res.on('data',c=>{written+=c.length;if(written>maxBytes){res.destroy(Error('Asset too large'));return;}ryanovaUpdateStatus='Downloading '+Math.floor(written/1048576)+' MB';});
+        res.on('error',fail);res.pipe(output);
+        output.on('finish',()=>{if(settled)return;settled=true;output.close(()=>fsR.rename(part,target,e=>e?reject(e):resolve()));});
       });
-    }
-  } finally {
-    ryanovaUpdateBusy = false;
-  }
+      req.on('timeout',()=>req.destroy(Error('Download timed out')));req.on('error',fail);
+    };
+    output.on('error',fail);get(url,0);
+  });
 }
-// END_RYANOVA_UPDATE_MANAGER_V1
+function ryanovaPackageType(){
+  if(process.platform!=='linux'||!app.isPackaged)return null;
+  if(process.env.APPIMAGE)return 'AppImage';
+  return 'deb';
+}
+async function checkRyanovaUpdates(manual=false){
+  if(ryanovaUpdateBusy)return;
+  if(!manual&&settings?.autoUpdates===false)return;
+  ryanovaUpdateBusy=true;
+  try{
+    ryanovaUpdateStatus='Checking GitHub';
+    const releases=JSON.parse((await ryanovaRequest(RYANOVA_API,1024*1024)).toString('utf8'));
+    if(!Array.isArray(releases))throw Error('Invalid release response');
+    const valid=releases.filter(r=>!r.draft&&ryanovaVersionParts(r.tag_name)&&typeof r.html_url==='string'&&r.html_url.startsWith(RYANOVA_RELEASES+'/tag/'));
+    valid.sort((a,b)=>ryanovaCompareVersions(b.tag_name,a.tag_name));
+    const latest=valid[0],current=app.getVersion();
+    if(!latest||ryanovaCompareVersions(latest.tag_name,current)<=0){
+      ryanovaUpdateStatus='Up to date';
+      if(manual)await dialog.showMessageBox({type:'info',title:'Ryanova Updates',message:'Ryanova Browser is up to date',detail:'Installed: '+current,buttons:['OK']});
+      return;
+    }
+    if(!manual&&ryanovaLastNotice===latest.tag_name)return;
+    ryanovaLastNotice=latest.tag_name;
+    const type=ryanovaPackageType();
+    const asset=latest.assets?.find(a=>typeof a.name==='string'&&a.name.endsWith(type==='AppImage'?'.AppImage':'.deb')&&a.name.includes(latest.tag_name.replace(/^v/,''))&&a.browser_download_url?.startsWith('https://github.com/prabhukeni/ryanova-browser/releases/download/'));
+    const checksum=latest.assets?.find(a=>/^SHA256SUMS(?:[^/]*)?\.txt$/.test(a.name)&&a.browser_download_url?.startsWith('https://github.com/prabhukeni/ryanova-browser/releases/download/'));
+    const canDownload=!!(type&&asset&&checksum);
+    const result=(!manual&&canDownload&&settings?.autoUpdates!==false) ? {response:0} : await dialog.showMessageBox({type:'info',title:'Ryanova Update Available',message:'Ryanova Browser '+latest.tag_name+' is available',detail:'Installed: '+current+'\nAvailable: '+latest.tag_name+'\n\n'+(canDownload?'Download and verify this release? Installation requires your approval.':'Open GitHub to download the release.'),buttons:canDownload?['Download update','View GitHub release','Later']:['View GitHub release','Later'],defaultId:canDownload?2:1,cancelId:canDownload?2:1,noLink:true});
+    if((canDownload&&result.response===1)||(!canDownload&&result.response===0)){await shell.openExternal(latest.html_url);return;}
+    if(!canDownload||result.response!==0)return;
+    const fsR=require('node:fs'),pathR=require('node:path');
+    const folder=pathR.join(app.getPath('userData'),'verified-updates');
+    fsR.mkdirSync(folder,{recursive:true,mode:0o700});
+    if(!/^[a-zA-Z0-9 ._()-]+$/.test(asset.name))throw Error('Unsafe asset filename');
+    const destination=pathR.join(folder,asset.name);
+    const checksumText=(await ryanovaRequest(checksum.browser_download_url,1024*1024)).toString('utf8');
+    const line=checksumText.split(/\r?\n/).find(l=>l.trim().endsWith(asset.name)&&/^[a-f0-9]{64}\s+/i.test(l));
+    if(!line)throw Error('No SHA256 entry for '+asset.name);
+    const expected=line.trim().slice(0,64).toLowerCase();
+    fsR.rmSync(destination,{force:true});fsR.rmSync(destination+'.partial',{force:true});
+    await ryanovaDownloadFile(asset.browser_download_url,destination,1024*1024*700);
+    const digest=cryptoRyanova.createHash('sha256').update(fsR.readFileSync(destination)).digest('hex');
+    if(digest!==expected){fsR.rmSync(destination,{force:true});throw Error('SHA256 verification failed');}
+    ryanovaUpdateStatus='Verified '+asset.name;
+    const approved=await dialog.showMessageBox({type:'question',title:'Install Ryanova Update',message:'Download verified. Install '+latest.tag_name+'?',detail:type==='AppImage'?'Ryanova will close and replace the currently running AppImage. A backup will be retained.':'Ryanova will open the downloaded DEB in your system package installer. Administrator authorization may be required.',buttons:['Install','Later'],defaultId:1,cancelId:1,noLink:true});
+    if(approved.response!==0)return;
+    if(type==='deb'){
+      const error=await shell.openPath(destination);
+      if(error)await dialog.showMessageBox({type:'info',message:'Open the verified DEB with your package installer',detail:destination+'\n'+error});
+      return;
+    }
+    const running=process.env.APPIMAGE;
+    if(!running||!fsR.existsSync(running))throw Error('Running AppImage path unavailable');
+    const script=pathR.join(__dirname,'updater','replace-appimage.sh');
+    if(!fsR.existsSync(script))throw Error('AppImage update helper missing');
+    fsR.chmodSync(destination,0o700);
+    const child=spawnRyanova('/bin/bash',[script,String(process.pid),running,destination],{detached:true,stdio:'ignore'});
+    child.unref();app.quit();
+  }catch(e){
+    ryanovaUpdateStatus='Update error: '+e.message;
+    console.error('[Ryanova updater]',e);
+    if(manual||ryanovaLastNotice)await dialog.showMessageBox({type:'warning',title:'Ryanova Updates',message:'Update could not complete',detail:e.message,buttons:['OK']});
+  }finally{ryanovaUpdateBusy=false;}
+}
+// END_RYANOVA_UPDATE_MANAGER_V2
 
 const {app,BrowserWindow,WebContentsView,session,ipcMain,dialog,shell}=require('electron');
 const fs=require('fs'),path=require('path');
-const VERSION='1.1.0-beta.3';
+const VERSION=app.getVersion();
 app.commandLine.appendSwitch('disable-background-networking');
 // Chromium sandbox stays ON. Never disable web security or certificate validation.
 let win,tabs=[],active=-1,seq=0,settings,history=[],bookmarks=[],downloads=[],blockStats=0;
@@ -182,7 +159,7 @@ return template.includes('%s')
   ? template.replaceAll('%s',encodeURIComponent(s))
   : template+encodeURIComponent(s)}
 function isBlocked(url){if(!settings.blocking)return false;try{let u=new URL(url);let h=u.hostname.toLowerCase();return /(^|\.)(doubleclick\.net|googlesyndication\.com|googleadservices\.com|adnxs\.com|taboola\.com|outbrain\.com|scorecardresearch\.com|criteo\.com|quantserve\.com|adsrvr\.org|facebook\.net|hotjar\.com|segment\.io|mixpanel\.com)$/.test(h)}catch{return false}}
-function state(){return {version:VERSION,electron:process.versions.electron,engine:process.versions.chrome,platform:process.platform,blocking:settings.blocking,home:settings.home,searchEngine:settings.searchEngine||'google',aiProvider:settings.aiProvider||'chatgpt',
+function state(){return {version:VERSION,electron:process.versions.electron,engine:process.versions.chrome,platform:process.platform,autoUpdates:settings.autoUpdates!==false,updateStatus:ryanovaUpdateStatus,blocking:settings.blocking,home:settings.home,searchEngine:settings.searchEngine||'google',aiProvider:settings.aiProvider||'chatgpt',
 searchProviders:settings.searchProviders||{},
 aiProviders:settings.aiProviders||{},tabs:tabs.map((t,i)=>({id:t.id,title:t.title,url:t.url,loading:t.loading,active:i===active})),bookmarks,history:history.slice(-150).reverse(),downloads:downloads.slice(-30).reverse(),blocked:blockStats}}
 function send(){
@@ -306,6 +283,7 @@ function on(name,fn){ipcMain.on(name,(_e,arg)=>{try{fn(arg)}catch(e){console.err
 on('panel-set',name=>setPanel(name));
 on('new-tab',u=>newTab(u));on('select-tab',i=>activate(Number(i)));on('close-tab',i=>closeTab(Number(i)));
 on('check-updates',()=>checkRyanovaUpdates(true));
+on('set-auto-updates',enabled=>{settings.autoUpdates=!!enabled;save('settings',settings);send();});
 on('navigate',u=>{let t=current();if(!t)return;let url=validURL(u);if(url==='rynova://home'){t.view.webContents.loadURL('about:blank');t.url='rynova://home';t.title='New Tab';send()}else t.view.webContents.loadURL(url).catch(()=>{})});
 on('back',()=>{let t=current();if(t&&t.view.webContents.navigationHistory.canGoBack())t.view.webContents.navigationHistory.goBack()});on('forward',()=>{let t=current();if(t&&t.view.webContents.navigationHistory.canGoForward())t.view.webContents.navigationHistory.goForward()});on('reload',()=>current()?.view.webContents.reload());
 on('bookmark',()=>{let t=current();if(!t||!t.url||t.url.startsWith('rynova:'))return;let i=bookmarks.findIndex(x=>x.url===t.url);if(i>=0)bookmarks.splice(i,1);else bookmarks.push({title:t.title,url:t.url});save('bookmarks',bookmarks);send()});

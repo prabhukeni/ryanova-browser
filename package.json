@@ -1,7 +1,7 @@
 {
   "name": "ryanova-browser",
   "productName": "Ryanova Browser",
-  "version": "1.1.0-beta.3",
+  "version": "1.1.0-beta.4",
   "description": "Ryanova Browser - Explore clearly. Browse freely.",
   "main": "main.js",
   "author": {
@@ -24,6 +24,7 @@
       "main.js",
       "preload.js",
       "ui/**/*",
+      "updater/**/*",
       "package.json"
     ],
     "linux": {

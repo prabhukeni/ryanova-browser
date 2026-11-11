@@ -18,3 +18,11 @@ Thumbs.db
 
 main.js.backup
 fullscreen-test.js
+
+*.UPDATE-TEST-BACKUP
+*.VERSION-BACKUP
+*.backup
+*.BEFORE-*
+*.WORKING-*
+node_modules/
+dist/

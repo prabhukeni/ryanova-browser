@@ -54,7 +54,7 @@ function render(){
   h+='<button class="provider-add" data-type="ai">+ Add AI assistant</button>';
   h+='<button class="panel-button" data-action="open-ai">✦ Open AI assistant</button>';
 }
-if(panel==='settings')h+=`<label class="switch">Block common ads & trackers <input id="block" type="checkbox" ${state.blocking?'checked':''}></label><div class="muted">Block count this session: ${state.blocked||0}. Basic blocklist, not comprehensive filtering.</div><button class="panel-button" data-action="clear">Clear cookies, cache and history</button><div class="muted">Home page: ${esc(state.home)}</div><button class="panel-button" data-action="sethome">Set current page as home</button>`;
+if(panel==='settings')h+=`<label class="switch">Auto Updates (check and download) <input id="auto-updates" type="checkbox" ${state.autoUpdates!==false?'checked':''}></label><label class="switch">Block common ads & trackers <input id="block" type="checkbox" ${state.blocking?'checked':''}></label><div class="muted">Block count this session: ${state.blocked||0}. Basic blocklist, not comprehensive filtering.</div><button class="panel-button" data-action="clear">Clear cookies, cache and history</button><div class="muted">Home page: ${esc(state.home)}</div><button class="panel-button" data-action="sethome">Set current page as home</button>`;
   if(panel==='about')h+=`<p><strong>Ryanova Browser ${esc(state.version)}</strong></p><p class="muted">Chromium ${esc(state.engine)} · ${esc(state.platform)}</p><p class="muted">Internal team beta. Chromium sandbox enabled. No telemetry in Ryanova code.</p>`;
   if(panel==='bookmarks'||panel==='history'){
     const items=state[panel]||[];
@@ -186,6 +186,7 @@ if(ryanovaUpdateButton){
   el.querySelectorAll('[data-url]').forEach(x=>x.onclick=()=>{
     api.send('navigate',x.dataset.url);setPanel('');
   });
+  const au=document.getElementById('auto-updates');if(au)au.onchange=()=>api.send('set-auto-updates',au.checked);
   const b=document.getElementById('block');if(b)b.onchange=()=>api.send('set-blocking',b.checked);
 }
 api.onPanel(name=>{panel=name;render()});
